@@ -2,6 +2,8 @@ package com.culturedear.chord;
 
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import org.jfugue.theory.Chord;
+import org.jfugue.theory.Intervals;
+import org.jfugue.theory.Note;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,6 +17,12 @@ import java.util.Optional;
  */
 @RestController
 public class ChordAnalyzerController {
+
+  // TODO: Remove this static initializer when power chords are supported by JFugue
+  static {
+    Chord.chordMap.put("POW", new Intervals("1 5"));
+  }
+
   private MusicChord musicChord;
   @RequestMapping("/analyze")
   public ResponseEntity<Object> identifyChordByNotes(@RequestParam(value = "notes") String notes) {
@@ -22,9 +30,9 @@ public class ChordAnalyzerController {
     musicChord = null;
     try {
       jfugueChord = Chord.fromNotes(notes);
-      musicChord = new MusicChord(jfugueChord.getRoot().toString(),
-                                  jfugueChord.getChordType(),
-                                  jfugueChord.getBassNote().toString(),
+      musicChord = new MusicChord(Note.getToneStringWithoutOctave(jfugueChord.getRoot().getValue()),
+                                  jfugueChord.getChordType().toLowerCase(),
+                                  Note.getToneStringWithoutOctave(jfugueChord.getBassNote().getValue()),
                                   jfugueChord.getInversion(),
                                   jfugueChord.isMajor(),
                                   jfugueChord.isMinor(),
@@ -33,7 +41,6 @@ public class ChordAnalyzerController {
     catch (Exception e) {
       System.out.println("Exception encountered in ChordAnalyzerController#identifyChordByNotes: " + e);
     }
-    //musicChord = new MusicChord("", "", 0, false, false);
     return Optional.ofNullable(musicChord)
         .map(mc -> new ResponseEntity<>((Object)mc, HttpStatus.OK))
         .orElse(new ResponseEntity<>("Could not analyze the chord", HttpStatus.INTERNAL_SERVER_ERROR));
