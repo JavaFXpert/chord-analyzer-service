@@ -1,0 +1,261 @@
+<!--
+ Copyright 2015 the original author or authors.
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+<!doctype html>
+
+<html class="no-js" lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chord Analyzer Client</title>
+  <link rel="stylesheet" href="css/foundation.css" />
+  <script src="js/vendor/modernizr.js"></script>
+</head>
+
+<body>
+  <!-- First top bar -->
+  <nav class="top-bar" data-topbar role="navigation">
+    <ul class="title-area">
+      <li class="name">
+        <h1><a href="#">Chord Analyzer Client</a></h1>
+      </li>
+    </ul>
+
+    <section class="top-bar-section">
+      <!-- Left Nav Section -->
+      <li class="left"><label>&nbsp;</label></li>
+
+      <!-- Right Nav Section -->
+      <ul class="right">
+        <li><a href="http://pivotal.io/platform/" target="_blank"><img src="img/cloudfoundry-logo.png" ></a></li>
+      </ul>
+      <ul class="right">
+        <li><a href="http://pivotal.io/platform" target="_blank"><i>and Cloud Foundry</i></a></li>
+      </ul>
+      <ul class="right">
+        <li><a href="http://projects.spring.io/spring-boot/" target="_blank"><img src="img/spring-logo.png" ></a></li>
+      </ul>
+      <ul class="right">
+        <li><a href="http://projects.spring.io/spring-boot/" target="_blank"><i>powered by Spring Boot</i></a></li>
+      </ul>
+
+    </section>
+  </nav>
+
+  <div class="panel callout large-centered">
+    <h1 id="notesDisplay">Notes:</h1>
+    <h1 id="chordNotationDisplay">Chord:</h1>
+  </div>
+
+  <div id="aboutDialog" class="reveal-modal large" data-reveal aria-labelledby="aboutDialogTitle" aria-hidden="true" role="dialog">
+    <div align="center">
+      <h3 id="aboutDialogTitle">About Counterpoint Composer</h3>
+      <!--img src="img/counterpoint-composer-icon-90x90.png" -->
+      <p>Version 1.0</p>
+      <p>Developed by <a href="https://twitter.com/javafxpert"
+                         target="_blank">James L. Weaver</a></p>
+      <h4>Acknowledgements:</h4>
+      <p>David Koelle for adding chord analysis faclities to his <a href="http://www.jfugue.org"
+                                                                    target="_blank">JFugue Java library</a> which Counterpoint Composer uses for chord annotation.</p>
+      <p>Andrew Clay Shafer, Brian Clozel, Joshua Long, Kenny Bastini, Mark Heckler, Bridget Kromhout, Casey West and other colleagues at <a href="http://www.pivotal.io"
+                                                       target="_blank">Pivotal Software</a> for their wise counsel.</p>
+      <p>Licensed under the Apache License, Version 2.0</p>
+      <a class="close-reveal-modal" aria-label="Close">&#215;</a>
+    </div>
+  </div>
+
+  <script>
+    var midiAccess=null;	// the MIDIAccess object.
+    var activeNotes = [];	// the stack of actively-pressed keys
+    var outputDevice; // an output MIDI device TODO: Implement output functionality
+
+    window.addEventListener('load', function() {
+      if (navigator.requestMIDIAccess) {
+        navigator.requestMIDIAccess().then(onMIDIInit, onMIDIReject);
+      }
+      else {
+        alert("No MIDI support present in your browser");
+      }
+
+    } );
+
+    function hookUpMIDIInput() {
+      var haveAtLeastOneInputDevice = false;
+      var inputs = midiAccess.inputs.values();
+      for (var input = inputs.next(); input && !input.done; input = inputs.next()) {
+        input.value.onmidimessage = MIDIMessageEventHandler;
+        haveAtLeastOneInputDevice = true;
+      }
+      if (!haveAtLeastOneInputDevice) {
+        alert("No MIDI input devices present.");
+      }
+    }
+
+    function hookUpMIDIOutput() {
+      var haveAtLeastOneOutputDevice=false;
+      var outputs=midiAccess.outputs.values();
+      for ( var output = outputs.next(); output && !output.done; output = outputs.next()) {
+        if (outputDevice == null) {
+          outputDevice = output;
+        }
+        output.value.onmidimessage = MIDIMessageEventHandler;
+        haveAtLeastOneOutputDevice = true;
+      }
+      if (!haveAtLeastOneOutputDevice) {
+        //alert("No MIDI output devices present.");
+      }
+    }
+
+    function onMIDIInit(midi) {
+      midiAccess = midi;
+
+      hookUpMIDIInput();
+      midiAccess.onstatechange=hookUpMIDIInput;
+
+      hookUpMIDIOutput();
+      //midiAccess.onstatechange=hookUpMIDIOutput;
+    }
+
+    function onMIDIReject(err) {
+      alert("The MIDI system failed to start.");
+    }
+
+    function MIDIMessageEventHandler(event) {
+      // Mask off the lower nibble (MIDI channel, which we don't care about)
+      switch (event.data[0] & 0xf0) {
+        case 0x90:
+          if (event.data[2]!=0) {  // if velocity != 0, this is a note-on message
+            noteOn(event.data[1]);
+            return;
+          }
+        // if velocity == 0, fall thru: it's a note-off.  MIDI's weird, ya'll.
+        case 0x80:
+          noteOff(event.data[1]);
+          return;
+      }
+    }
+
+    function noteOn(noteNumber) {
+      activeNotes.push( noteNumber );
+      callChordAnalyzerService(activeNotes);
+    }
+
+    function noteOff(noteNumber) {
+      var position = activeNotes.indexOf(noteNumber);
+      if (position!=-1) {
+        activeNotes.splice(position,1);
+      }
+      callChordAnalyzerService(activeNotes);
+    }
+
+    /**
+     * param: notesCurrentlyOn Array of integers representing notes that are currently being played
+     */
+    function callChordAnalyzerService(notesCurrentlyOn) {
+      // Convert notesCurrentlyOn array to sorted ascending, space separated string
+      notesCurrentlyOn = notesCurrentlyOn.sort();
+      updateNotesDisplay(notesCurrentlyOn);
+      var notesCurrentlyOnStr = notesCurrentlyOn.join(" ");
+
+      if (notesCurrentlyOn.length > 0) {
+        $.ajax({
+          method: 'GET',
+          //contentType: 'application/json',
+          url: '/analyze',
+          data: 'notes=' + notesCurrentlyOnStr
+        }).done(function (musicChord) {
+          updateChordDisplay(makeChordNotation(musicChord));
+        }).error(function (err) {
+          updateChordDisplay(makeChordNotation(null));
+          //$('#noMidiSupportDialog').foundation('reveal', 'open');
+        });
+      }
+    }
+
+    function updateNotesDisplay(notes) {
+      var letterNotes = "";
+      for (i = 0; i < notes.length; i++) {
+        letterNotes += (midiNoteToLetter(notes[i]) + " ");
+      }
+      $( "#notesDisplay" ).text("Notes: " + letterNotes);
+    }
+
+    function updateChordDisplay(newText) {
+      $( "#chordNotationDisplay" ).text("Chord: " + newText);
+    }
+
+    function makeChordNotation(clientMusicChord) {
+      var chordNotationStr = "";
+      if (clientMusicChord != null) {
+        var chordTypeStr = clientMusicChord.chordType;
+
+        chordNotationStr = clientMusicChord.root;
+        if (chordTypeStr.toLowerCase() === "pow") {
+          chordNotationStr += "5"; // This is a power chord (triad with no 3)
+        } else {
+          chordNotationStr += " " + chordTypeStr;
+        }
+
+        // Notate as a slash chord if appropriate
+        if (clientMusicChord.inversion != 0) {
+          chordNotationStr += "/" + clientMusicChord.bassNote;
+        }
+      }
+      return chordNotationStr;
+    }
+
+    function midiNoteToLetter(noteNum) {
+      var octaveNum = noteNum / 12 - 1;
+      var pitchClassNum = noteNum % 12;
+      var noteName = "";
+      switch (pitchClassNum) {
+        case 0:
+          noteName = "C"; break;
+        case 1:
+          noteName = "C#"; break;
+        case 2:
+          noteName = "D"; break;
+        case 3:
+          noteName = "Eb"; break;
+        case 4:
+          noteName = "E"; break;
+        case 5:
+          noteName = "F"; break;
+        case 6:
+          noteName = "F#"; break;
+        case 7:
+          noteName = "G"; break;
+        case 8:
+          noteName = "Ab"; break;
+        case 9:
+          noteName = "A"; break;
+        case 10:
+          noteName = "Bb"; break;
+        case 11:
+          noteName = "B"; break;
+      }
+      return noteName;
+    }
+
+  </script>
+
+  <script src="js/vendor/jquery.js"></script>
+  <script src="js/foundation.min.js"></script>
+  <script>
+    $(document).foundation();
+  </script>
+
+</body>
+</html>
